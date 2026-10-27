@@ -1,0 +1,5 @@
+scraper/gosom/
+data/
+node_modules/
+dist/
+.env
