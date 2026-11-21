@@ -1,4 +1,5 @@
 import express from 'express';
+import leadsRouter from './leads.js';
 
 const app = express();
 const PORT = 3001;
@@ -33,4 +34,37 @@ app.get('/api/jobs', async (req, res) => {
   }
 });
 
+// Start a new scrape
+app.post('/api/jobs', async (req, res) => {
+  const { name, keywords, email = false, depth = 1, maxTime = 900 } = req.body ?? {};
+  if (!name || !Array.isArray(keywords) || keywords.length === 0) {
+    return res.status(400).json({ error: 'name and keywords (a non-empty array) are required' });
+  }
+  const payload = { name, keywords, lang: 'en', zoom: 15, depth, email, max_time: maxTime };
+  try {
+    const r = await fetch(`${GOSOM}/api/v1/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) return res.status(r.status).json(data);
+    res.status(201).json({ id: data.id });
+  } catch {
+    res.status(502).json({ error: `Cannot reach GoSOM at ${GOSOM}` });
+  }
+});
+
+// Delete a job
+app.delete('/api/jobs/:id', async (req, res) => {
+  try {
+    const r = await fetch(`${GOSOM}/api/v1/jobs/${req.params.id}`, { method: 'DELETE' });
+    res.status(r.ok ? 200 : r.status).json({ deleted: r.ok });
+  } catch {
+    res.status(502).json({ error: `Cannot reach GoSOM at ${GOSOM}` });
+  }
+});
+
+app.use('/api/jobs', leadsRouter);
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+
