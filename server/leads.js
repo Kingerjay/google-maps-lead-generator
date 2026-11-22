@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { parse } from 'csv-parse/sync';
+import { validateEmail, pickBest } from './validate.js';
 
 const GOSOM = 'http://localhost:8080';
 const router = Router();
 
-// "https://www.Example.com/contact" -> "example.com"
 function toDomain(url) {
   if (!url) return '';
   try {
@@ -46,11 +46,35 @@ router.get('/:id/leads', async (req, res) => {
         ...parseAddress(row.complete_address),
         rating: row.review_rating,
         review_count: row.review_count,
-        emails: row.emails,
+        emails: row.emails || '',
         google_maps_url: row.link,
         place_id: row.place_id,
       });
     }
+
+    // Check each lead's emails (syntax + mail server lookup, nothing is sent)
+    await Promise.all(
+      leads.map(async (l) => {
+        const list = [...new Set(l.emails.split(/[,;\s]+/).filter(Boolean))];
+        l.email = '';
+        l.email_status = '';
+        l.email_note = '';
+        l.email_role = false;
+        l.email_domain_match = null;
+        if (!list.length) return;
+
+        const checks = await Promise.all(list.map((e) => validateEmail(e, l.domain)));
+        const best = pickBest(checks);
+        const notes = [best.reason];
+        if (best.role) notes.push('generic role address');
+        if (best.domainMatch === false) notes.push('domain differs from website');
+        l.email = best.email;
+        l.email_status = best.status;
+        l.email_note = notes.join('; ');
+        l.email_role = best.role;
+        l.email_domain_match = best.domainMatch;
+      })
+    );
 
     res.json({
       summary: {
@@ -59,6 +83,9 @@ router.get('/:id/leads', async (req, res) => {
         withWebsite: leads.filter((l) => l.website).length,
         withPhone: leads.filter((l) => l.phone).length,
         withEmail: leads.filter((l) => l.emails).length,
+        emailsOk: leads.filter((l) => l.email_status === 'mx_ok').length,
+        emailsInvalid: leads.filter((l) => l.email_status === 'invalid').length,
+        emailsUnknown: leads.filter((l) => l.email_status === 'unknown').length,
       },
       leads,
     });
