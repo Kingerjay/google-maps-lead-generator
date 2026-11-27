@@ -36,11 +36,33 @@ app.get('/api/jobs', async (req, res) => {
 
 // Start a new scrape
 app.post('/api/jobs', async (req, res) => {
-  const { name, keywords, email = false, depth = 1, maxTime = 900 } = req.body ?? {};
+  const { name, keywords, depth = 1, maxTime = 1800, lat, lon, radius } = req.body ?? {};
   if (!name || !Array.isArray(keywords) || keywords.length === 0) {
     return res.status(400).json({ error: 'name and keywords (a non-empty array) are required' });
   }
-  const payload = { name, keywords, lang: 'en', zoom: 15, depth, email, max_time: maxTime };
+
+  const payload = {
+    name,
+    keywords,
+    lang: 'en',
+    zoom: 15,
+    depth: Number(depth) || 1,
+    email: true,
+    max_time: Number(maxTime) || 900,
+  };
+
+  // Location pin: both lat and lon are needed together
+  if (lat || lon) {
+    const la = Number(lat);
+    const lo = Number(lon);
+    if (!lat || !lon || Number.isNaN(la) || Number.isNaN(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) {
+      return res.status(400).json({ error: 'lat and lon must both be valid coordinates' });
+    }
+    payload.lat = String(la);
+    payload.lon = String(lo);
+  }
+  if (radius) payload.radius = Number(radius);
+
   try {
     const r = await fetch(`${GOSOM}/api/v1/jobs`, {
       method: 'POST',

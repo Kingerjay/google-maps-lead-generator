@@ -1,25 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { buildRows, saveCsv } from '../lib/csv.js'
 
-const COLUMNS = [
-    'business_name', 'category', 'phone', 'website', 'domain', 'city', 'state',
-    'postal_code', 'rating', 'review_count', 'email', 'email_status', 'email_note',
-    'google_maps_url', 'place_id', 'project_name', 'source_query', 'scraped_at',
-    'lead_status', 'notes',
-  ]
-
-  const emailBadge = {
-    mx_ok: 'bg-green-100 text-green-800',
-    invalid: 'bg-red-100 text-red-800',
-    unknown: 'bg-gray-100 text-gray-700',
-  }
-  const emailLabel = { mx_ok: 'domain ok', invalid: 'invalid', unknown: 'unknown' }
-
-function toCsv(rows) {
-  const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
-  const lines = rows.map((r) => COLUMNS.map((c) => esc(r[c])).join(','))
-  return [COLUMNS.join(','), ...lines].join('\n')
+const emailBadge = {
+  mx_ok: 'bg-green-100 text-green-800',
+  invalid: 'bg-red-100 text-red-800',
+  unknown: 'bg-gray-100 text-gray-700',
 }
+const emailLabel = { mx_ok: 'domain ok', invalid: 'invalid', unknown: 'unknown' }
 
 function Stat({ label, value }) {
   return (
@@ -71,32 +59,26 @@ export default function ProjectDetails() {
     )
   }, [leads, search, category, city, onlyEmail])
 
-  function downloadCsv() {
-    const rows = filtered.map((l) => ({
-      ...l,
-      project_name: job?.name ?? '',
-      source_query: job?.keywords.join(' | ') ?? '',
-      scraped_at: job?.date ?? '',
-      lead_status: 'New',
-      notes: '',
-    }))
-    const blob = new Blob([toCsv(rows)], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const slug = (job?.name ?? 'leads').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    a.href = url
-    a.download = slug + '.csv'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   return (
     <div>
-      <Link to="/" className="mt-4 inline-block text-sm text-blue-700 hover:underline">
+      <Link to="/projects" className="mt-4 inline-block text-sm text-blue-700 hover:underline">
         &larr; All projects
       </Link>
       <h2 className="mt-2 text-xl font-semibold text-gray-900">{job?.name ?? 'Project'}</h2>
-      {job && <p className="text-sm text-gray-500">{job.keywords.join(' | ')}</p>}
+      {job && <p className="text-sm text-gray-500">Started {new Date(job.date).toLocaleString()}</p>}
+
+      {job && (
+        <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
+          <p className="text-sm font-medium text-gray-700">Search queries ({job.keywords.length})</p>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {job.keywords.map((k) => (
+              <li key={k} className="break-words rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                {k}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {error && <p className="mt-4 rounded bg-red-50 p-3 text-red-700">{error}</p>}
 
@@ -127,13 +109,17 @@ export default function ProjectDetails() {
               {cities.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={onlyEmail} onChange={(e) => setOnlyEmail(e.target.checked)} />
-            Only with email
+              <input type="checkbox" checked={onlyEmail} onChange={(e) => setOnlyEmail(e.target.checked)} />
+              Only with email
             </label>
             <span className="text-sm text-gray-500">
               Showing {filtered.length} of {leads.length}
             </span>
-            <button onClick={downloadCsv} className="ml-auto rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
+            <button
+              disabled={!job}
+              onClick={() => saveCsv(buildRows(filtered, job), job.name)}
+              className="ml-auto rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            >
               Download CSV
             </button>
           </div>
@@ -170,15 +156,15 @@ export default function ProjectDetails() {
                       {l.rating ? Number(l.rating).toFixed(1) : '-'} ({l.review_count || 0})
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                    {l.email ? (
+                      {l.email ? (
                         <>
-                        <div>{l.email}</div>
-                        <span className={'mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ' + (emailBadge[l.email_status] || 'bg-gray-100 text-gray-700')}>
+                          <div>{l.email}</div>
+                          <span className={'mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ' + (emailBadge[l.email_status] || 'bg-gray-100 text-gray-700')}>
                             {emailLabel[l.email_status] || l.email_status}
-                        </span>
-                        {l.email_domain_match === false && <span className="ml-1 text-xs text-yellow-700">domain differs</span>}
+                          </span>
+                          {l.email_domain_match === false && <span className="ml-1 text-xs text-yellow-700">domain differs</span>}
                         </>
-                    ) : '-'}
+                      ) : '-'}
                     </td>
                     <td className="px-4 py-3">
                       <a href={l.google_maps_url} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">
