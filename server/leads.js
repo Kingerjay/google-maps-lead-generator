@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { parse } from 'csv-parse/sync';
-import { validateEmail, pickBest } from './validate.js';
 
 const GOSOM = 'http://localhost:8080';
 const router = Router();
@@ -22,6 +21,38 @@ function parseAddress(raw) {
   } catch {
     return { city: '', state: '', postal_code: '' };
   }
+}
+
+// GoSOM puts every email found for a business in one field: split, trim and de-duplicate
+const FILE_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'ico', 'css', 'js', 'woff', 'woff2', 'ttf', 'pdf',
+]);
+const JUNK_DOMAINS = [
+  'example.com', 'example.org', 'domain.com', 'yourdomain.com', 'yoursite.com',
+  'sentry.io', 'wixpress.com',
+];
+const PLACEHOLDER_LOCALS = new Set(['name', 'yourname', 'youremail', 'email', 'user', 'username']);
+const EMAIL_SYNTAX = /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
+
+// Quietly drops things scrapers pick up by mistake: image file names, placeholders, tracking IDs
+function isJunk(email) {
+  if (email.length > 254 || !EMAIL_SYNTAX.test(email)) return true;
+  const [local, domain] = email.split('@');
+  if (FILE_EXTENSIONS.has(domain.split('.').pop())) return true;
+  if (JUNK_DOMAINS.some((d) => domain === d || domain.endsWith('.' + d))) return true;
+  if (PLACEHOLDER_LOCALS.has(local)) return true;
+  if (/^[a-f0-9]{24,}$/.test(local)) return true; // long hash-like names
+  return false;
+}
+
+// GoSOM puts every email found for a business in one field: split, clean, drop junk, de-duplicate
+function parseEmails(raw) {
+  const found = String(raw ?? '')
+    .toLowerCase()
+    .split(/[,;\s]+/)
+    .map((e) => e.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''))
+    .filter((e) => e.includes('@') && !isJunk(e));
+  return [...new Set(found)];
 }
 
 router.get('/:id/leads', async (req, res) => {
@@ -46,35 +77,11 @@ router.get('/:id/leads', async (req, res) => {
         ...parseAddress(row.complete_address),
         rating: row.review_rating,
         review_count: row.review_count,
-        emails: row.emails || '',
+        emails: parseEmails(row.emails),
         google_maps_url: row.link,
         place_id: row.place_id,
       });
     }
-
-    // Check each lead's emails (syntax + mail server lookup, nothing is sent)
-    await Promise.all(
-      leads.map(async (l) => {
-        const list = [...new Set(l.emails.split(/[,;\s]+/).filter(Boolean))];
-        l.email = '';
-        l.email_status = '';
-        l.email_note = '';
-        l.email_role = false;
-        l.email_domain_match = null;
-        if (!list.length) return;
-
-        const checks = await Promise.all(list.map((e) => validateEmail(e, l.domain)));
-        const best = pickBest(checks);
-        const notes = [best.reason];
-        if (best.role) notes.push('generic role address');
-        if (best.domainMatch === false) notes.push('domain differs from website');
-        l.email = best.email;
-        l.email_status = best.status;
-        l.email_note = notes.join('; ');
-        l.email_role = best.role;
-        l.email_domain_match = best.domainMatch;
-      })
-    );
 
     res.json({
       summary: {
@@ -82,10 +89,8 @@ router.get('/:id/leads', async (req, res) => {
         duplicatesRemoved: rows.length - leads.length,
         withWebsite: leads.filter((l) => l.website).length,
         withPhone: leads.filter((l) => l.phone).length,
-        withEmail: leads.filter((l) => l.emails).length,
-        emailsOk: leads.filter((l) => l.email_status === 'mx_ok').length,
-        emailsInvalid: leads.filter((l) => l.email_status === 'invalid').length,
-        emailsUnknown: leads.filter((l) => l.email_status === 'unknown').length,
+        withEmail: leads.filter((l) => l.emails.length > 0).length,
+        emailsFound: new Set(leads.flatMap((l) => l.emails)).size,
       },
       leads,
     });

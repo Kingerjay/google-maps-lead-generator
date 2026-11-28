@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { buildRows, saveCsv } from '../lib/csv.js'
+import { buildRows, saveCsv, saveText } from '../lib/csv.js'
+import DownloadMenu from '../components/DownloadMenu.jsx'
+import Modal from '../components/Modal.jsx'
 
-const emailBadge = {
-  mx_ok: 'bg-green-100 text-green-800',
-  invalid: 'bg-red-100 text-red-800',
-  unknown: 'bg-gray-100 text-gray-700',
-}
-const emailLabel = { mx_ok: 'domain ok', invalid: 'invalid', unknown: 'unknown' }
 
 function Stat({ label, value }) {
   return (
@@ -27,6 +23,7 @@ export default function ProjectDetails() {
   const [category, setCategory] = useState('')
   const [city, setCity] = useState('')
   const [onlyEmail, setOnlyEmail] = useState(false)
+  const [showQueries, setShowQueries] = useState(false)
 
   useEffect(() => {
     fetch('/api/jobs')
@@ -54,10 +51,13 @@ export default function ProjectDetails() {
       (l) =>
         (!category || l.category === category) &&
         (!city || l.city === city) &&
-        (!onlyEmail || l.emails) &&
+        (!onlyEmail || l.emails.length > 0) &&
         (!q || l.business_name.toLowerCase().includes(q) || l.domain.includes(q))
     )
   }, [leads, search, category, city, onlyEmail])
+
+  const emailList = useMemo(() => [...new Set(filtered.flatMap((l) => l.emails))], [filtered])
+  const phoneList = useMemo(() => [...new Set(filtered.map((l) => l.phone).filter(Boolean))], [filtered])
 
   return (
     <div>
@@ -68,15 +68,22 @@ export default function ProjectDetails() {
       {job && <p className="text-sm text-gray-500">Started {new Date(job.date).toLocaleString()}</p>}
 
       {job && (
-        <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm font-medium text-gray-700">Search queries ({job.keywords.length})</p>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {job.keywords.map((k) => (
-              <li key={k} className="break-words rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                {k}
-              </li>
-            ))}
-          </ul>
+        <div className="mt-4 flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
+          <span className="shrink-0 text-sm font-medium text-gray-700">
+            Search queries ({job.keywords.length})
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm text-gray-600" title={job.keywords.join('\n')}>
+            {job.keywords.join('  |  ')}
+          </span>
+          {job.keywords.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setShowQueries(true)}
+              className="shrink-0 text-sm font-medium text-blue-700 hover:underline"
+            >
+              See more
+            </button>
+          )}
         </div>
       )}
 
@@ -89,7 +96,7 @@ export default function ProjectDetails() {
             <Stat label="With website" value={data.summary.withWebsite} />
             <Stat label="With phone" value={data.summary.withPhone} />
             <Stat label="With email" value={data.summary.withEmail} />
-            <Stat label="Emails passing checks" value={data.summary.emailsOk} />
+            <Stat label="Emails found" value={data.summary.emailsFound} />
             <Stat label="Duplicates removed" value={data.summary.duplicatesRemoved} />
           </div>
 
@@ -115,13 +122,32 @@ export default function ProjectDetails() {
             <span className="text-sm text-gray-500">
               Showing {filtered.length} of {leads.length}
             </span>
-            <button
-              disabled={!job}
-              onClick={() => saveCsv(buildRows(filtered, job), job.name)}
-              className="ml-auto rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              Download CSV
-            </button>
+            
+            <div className="ml-auto">
+              <DownloadMenu
+                disabled={!job}
+                items={[
+                  {
+                    label: 'All Data (.csv)',
+                    note: filtered.length + ' rows',
+                    onClick: () => saveCsv(buildRows(filtered, job), job.name),
+                  },
+                  {
+                    label: 'Emails only (.txt)',
+                    note: emailList.length + ' emails',
+                    disabled: emailList.length === 0,
+                    onClick: () => saveText(emailList, job.name, 'emails'),
+                  },
+                  {
+                    label: 'Phone numbers only (.txt)',
+                    note: phoneList.length + ' numbers',
+                    disabled: phoneList.length === 0,
+                    onClick: () => saveText(phoneList, job.name, 'phones'),
+                  },
+                ]}
+              />
+            </div>
+
           </div>
 
           <div className="mt-4 overflow-x-auto rounded-lg border border-gray-200 bg-white">
@@ -156,15 +182,7 @@ export default function ProjectDetails() {
                       {l.rating ? Number(l.rating).toFixed(1) : '-'} ({l.review_count || 0})
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {l.email ? (
-                        <>
-                          <div>{l.email}</div>
-                          <span className={'mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ' + (emailBadge[l.email_status] || 'bg-gray-100 text-gray-700')}>
-                            {emailLabel[l.email_status] || l.email_status}
-                          </span>
-                          {l.email_domain_match === false && <span className="ml-1 text-xs text-yellow-700">domain differs</span>}
-                        </>
-                      ) : '-'}
+                      {l.emails.length ? l.emails.map((e) => <div key={e}>{e}</div>) : '-'}
                     </td>
                     <td className="px-4 py-3">
                       <a href={l.google_maps_url} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">
@@ -178,6 +196,20 @@ export default function ProjectDetails() {
           </div>
         </>
       )}
+
+{showQueries && job && (
+        <Modal title={'Search queries (' + job.keywords.length + ')'} onClose={() => setShowQueries(false)}>
+          <ol className="space-y-2">
+            {job.keywords.map((k, i) => (
+              <li key={k} className="flex gap-3 rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                <span className="w-8 shrink-0 text-right text-gray-400">{i + 1}.</span>
+                <span className="break-words">{k}</span>
+              </li>
+            ))}
+          </ol>
+        </Modal>
+      )}
+
     </div>
   )
 }

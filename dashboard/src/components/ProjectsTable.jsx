@@ -39,7 +39,7 @@ export default function ProjectsTable({ jobs, onDelete }) {
             <th className="px-4 py-3">Project</th>
             <th className="px-4 py-3">Search queries</th>
             <th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Date</th>
+            <th className="px-4 py-3">Created</th>
             <th className="px-4 py-3 text-right">Actions</th>
           </tr>
         </thead>
